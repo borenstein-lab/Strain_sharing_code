@@ -1,0 +1,171 @@
+---
+title: "CST Multiclass prediction plots"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "")
+```
+
+# Directories
+
+```{r Defining directories, messages = FALSE}
+# Folders
+getwd()
+rm(list = ls())
+metadata_dir = "../../Data/Metadata/fertility_meta.csv"
+feat_table_dir = "../../Data/GTDB_sensitive/metaphlan/"
+path <- "../../cst_predictions_output/CST/test_rem_rare_rem_prevalence_cutoff_0.05_avg_abundance_cutoff_0.05_unclassified_thresh_80.0/"
+roc_sheet = "all_df"
+pr_sheet = "pr_df"
+importance_sheet = "importance_df"
+save_dir = paste0(path, "figures/")
+if (!file.exists(save_dir)){
+  dir.create(save_dir)
+}
+cst_dict = c("1" = "I", "2" = "II", "3" = "III", "4" = "IV-A", "5" = "IV-B", "6" = "IV-C", "7" = "V")
+```
+
+# Libraries
+
+```{r Loading libraries, message = FALSE, warning = FALSE}
+library(readr)
+library(psych)
+library(ggplot2)
+library(ggpubr)
+library(tibble)
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(ape)
+library(cowplot)
+library(vegan)
+library(kableExtra)
+library(stringr)  
+library(data.table)
+library(purrr)
+library(kableExtra)
+library(pheatmap)
+library(dunn.test)
+library(rstatix)
+library(nsprcomp)
+library(circlize)
+library(tidytext)
+library(viridis)
+library(ggpmisc)
+library(extrafont)
+library(showtext)
+font_add_google("Gafata")
+showtext_auto()
+
+library(conflicted)
+conflict_prefer("order", "base")
+conflict_prefer("last", "dplyr")
+conflict_prefer("annotate", "ggplot2")
+
+
+options(scipen = 999)
+source('../packages/data_manipulations.R')
+source('../packages/load_data.R')
+```
+
+# Load meta
+
+```{r}
+meta = order_meta(metadata_dir, feat_table_dir, "valencia_metaphlan_res", FALSE)
+```
+
+# Load ML results data
+
+```{r}
+all_files <- paste0(path, list.files(path, recursive = FALSE))
+files_only <- all_files[!file.info(all_files)$isdir]
+
+roc_lst = list()
+pr_lst = list()
+importance_lst = list()
+
+for (file_path in files_only){
+  if (!str_detect(file_path, "readme")) {
+    name = sub(".*/(.*?)\\.xlsx", "\\1", file_path)
+    roc = read_excel(file_path, sheet = roc_sheet, col_names = TRUE)
+    roc = roc %>% select(-c("...1"))
+    pr = read_excel(file_path, sheet = pr_sheet, col_names = TRUE)
+    pr = pr %>% select(-c("...1"))
+    importance = read_excel(file_path, sheet = importance_sheet, col_names = TRUE) %>% dplyr::select(-"...1")
+    roc_lst[[name]] = roc
+    pr_lst[[name]] = pr
+    importance_lst[[name]] = importance
+  }
+}
+```
+
+# ROC and PR plots
+
+## Function
+
+```{r}
+get_roc_plot = function(df, x_col = "fpr", y_col = "tpr", txt_col = "roc_auc", xlab = "False positive rate", ylab = "True positive rate"){
+  if (x_col == "fpr"){
+    txt_multiple = -1
+    txt_add = ""
+  } else {
+    txt_multiple = 1
+    txt_add = "PR "
+  }
+  ## Order df
+  ord_df = df %>%
+            mutate(bin_mean = ifelse(fold == max(fold), "mean", "folds")) %>%
+            mutate(label = recode(label, !!!cst_dict)) %>%
+            mutate(fold = as.factor(fold))
+  
+  ## AUC labels df
+  auc_df = ord_df %>% 
+            filter(bin_mean == "mean") %>%
+            dplyr::select(label, contains("auc")) %>%
+            mutate(txt = paste0(txt_add, "AUC = ", round(!!as.name(txt_col), 3))) %>%
+            distinct(txt, .keep_all = TRUE)
+            
+  ## Colors
+  fold_num = length(unique(ord_df$fold))
+  line_cols <- viridis(fold_num - 1)
+  line_cols[fold_num] <- "black"
+  
+  ## Plot
+  p = ggplot(data = ord_df) +
+        geom_line(aes_string(x = x_col, y = y_col, group = "fold", color = "fold", lwd = "bin_mean")) +
+        scale_linewidth_manual("type", values = c(0.3, 1.5), guide = "none") +
+        scale_color_manual(values = line_cols, name = "") +
+        theme_bw(base_family = "Gafata") +
+        labs(x = xlab, y = ylab) +
+        facet_wrap(~label) +
+        geom_text(size = 11, data = auc_df, mapping = aes(x = Inf, y = txt_multiple * (Inf), label = txt), hjust = 1.05, vjust = txt_multiple * (1.5), family = "Gafata") +
+        theme(strip.background = element_rect(fill = "#CBECE9")) +
+        theme(legend.position = "none") +
+        theme(text = element_text(size = 40))
+  return(p)
+}
+```
+
+## Plots
+
+```{r}
+for (name in names(roc_lst)){
+  df = roc_lst[[name]]
+  plot = get_roc_plot(df)
+  save_plot_path = paste0(save_dir, name, "_roc_plot.png")
+  ggsave(plot, file = save_plot_path, dpi = 300, height = 5, width = 6)
+  message(paste0("Plot saved to: ", save_plot_path))
+}
+```
+
+```{r}
+for (name in names(pr_lst)){
+  df = pr_lst[[name]]
+  plot = get_roc_plot(df, x_col = "recall", y_col = "precision", txt_col = "pr_auc", xlab = "Recall", ylab = "Precision")
+  save_plot_path = paste0(save_dir, name, "_pr_plot.png")
+  ggsave(plot, file = save_plot_path, dpi = 300, height = 5, width = 6)
+  message(paste0("Plot saved to: ", save_plot_path))
+}
+```

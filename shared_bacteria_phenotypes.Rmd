@@ -1,0 +1,181 @@
+---
+title: "Traitar results"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "")
+print(getwd())
+```
+
+# Directories
+
+```{r Defining directories, messages = FALSE}
+# Folders
+rm(list = ls())
+sample_with_n_markers = 8
+marker_in_n_samples = 1
+prevalence_cutoff = 0.05
+avg_abundance_cutoff = 0.05
+remove_rare = TRUE
+unclassified_threshold = 80
+name = "wilcoxon_ngd_all_n_2" 
+
+stat_path = paste0("../../Results/strainphlan/ngd_plots_sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples)
+category_file = paste0(stat_path, "/", name, ".csv")
+
+results_path <- "../../Traitar/"
+results_file = paste0(results_path, "all_representatives_all_genomes_results/phenotype_prediction/predictions_flat_majority-votes_combined.txt")
+sec_results_file = paste0(results_path, "missing_second_traitar/phenotype_prediction/predictions_flat_majority-votes_combined.txt")
+file = "traitar"
+save_dir = paste0("../../Results/", file, "/")
+if (!file.exists(save_dir)){
+  dir.create(save_dir)
+  dir.create(file.path(sub("/$", "", save_dir), "plots"))
+}
+```
+ 
+# Libraries
+
+```{r Loading libraries, message = FALSE, warning = FALSE}
+library(readr)
+library(ggridges)
+library(ggplot2)
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(vegan)
+library(kableExtra)
+library(stringr)  
+library(data.table)
+library(purrr)
+library(ggpubr)
+library(fmsb)
+library(ggforce)
+library(rstatix)
+library(chisq.posthoc.test)
+library(vegan)
+
+options(scipen = 999)
+source('packages/raw_data_analysis_utils.R')
+source('packages/data_manipulations.R')
+source('packages/metaphlan_functions.R')
+source('packages/load_data.R')
+```
+
+# Load traitar results
+
+```{r}
+sgb_map_df = read_delim(file.path("../../StrainPhlan/mpa_vJan21_CHOCOPhlAnSGB_202103_SGB2GTDB.tsv"), delim = "\t", show_col_types = FALSE, col_names = FALSE) 
+sgb_2_gtdb = sgb_map_df %>%
+              rename("sgb" = "X1", "taxonomy" = "X2") %>%
+              # mutate(sgb = str_replace(sgb, "_group", "")) %>%
+              mutate(taxonomy = str_replace_all(taxonomy, " ", "_")) %>%
+              separate_rows(taxonomy, sep = ";") %>% 
+              separate(taxonomy, into = c("key", "value"), sep = "__") %>%
+              pivot_wider(names_from = key, values_from = value) %>%
+              mutate(sgb = paste0("t__", sgb)) %>%
+              mutate(s = str_replace_all(s, "_", " ")) %>%
+              mutate(s = if_else(s == "", g, s))
+```
+
+```{r}
+first_res = read.delim(results_file, row.names = NULL) %>%
+      as_tibble() %>%
+      rename("sgb" = "row.names", "phenotype_model" = "phenotype.model")
+sec_res = read.delim(sec_results_file, row.names = NULL) %>%
+      as_tibble() %>%
+      rename("sgb" = "row.names", "phenotype_model" = "phenotype.model")
+res = bind_rows(first_res, sec_res)
+
+cat = read.csv(category_file) %>%
+      as_tibble() %>%
+      mutate(category = ifelse(fdr <= 0.05, "shared", "not_shared")) %>%
+      dplyr::select(c(species, category)) %>%
+      left_join(sgb_2_gtdb %>% dplyr::select(sgb, s), by = c("species" = "s"))
+```
+
+# Order
+
+```{r}
+tmp <- res %>%
+    dplyr::select(c(sgb, sample, phenotype_model)) %>%
+    mutate(phenotype_model = gsub("\\+", "_", phenotype_model)) %>%
+    tidyr::pivot_longer(cols = -c(sgb, sample), values_to = 'model') %>%
+    mutate(dummy = TRUE) %>%
+    tidyr::pivot_wider(id_cols = c(sgb, sample), 
+                       names_from = model, 
+                       values_from = dummy) %>%
+    replace(is.na(.), FALSE)
+ord_res = tmp %>%
+          mutate(models = case_when((phypat == TRUE) & (phypat_PGL == TRUE) ~ "both",
+                                    (phypat == TRUE) & (phypat_PGL == FALSE) ~ "phypat",
+                                    (phypat == FALSE) & (phypat_PGL == TRUE) ~ "phypat_PGL")) 
+wide_df = ord_res %>% dplyr::select(c(sgb, models, sample)) %>%
+          pivot_wider(id_cols = "sample", names_from = "sgb", values_from = "models") %>%
+          column_to_rownames("sample") %>%
+          mutate(across(where(is.character), ~replace(., is.na(.), "none")))
+full_long_df = wide_df %>%
+                rownames_to_column("phenotype") %>%
+                pivot_longer(names_to = "sgb", cols = -phenotype) %>%
+                left_join(sgb_2_gtdb %>% dplyr::select(sgb, s) %>% rename("species" = "s"), by = "sgb") %>%
+                left_join(cat %>% dplyr::select(species, category), by = "species") 
+```
+
+```{r}
+fishers_path = "../../Results/fishers_co_005_005/"
+fishers_res = read.delim(paste0(fishers_path, "filtered_fishers_test_thresh_sgb_0.csv"), sep = ",") %>%
+                rename("sgb" = "gtdb_name") %>%
+                mutate(sgb = paste0("t__", sgb)) %>%
+                mutate(in_fishers = TRUE) %>% select(c(sgb, in_fishers))
+```
+
+
+# Statistical tests
+
+## Order df for fisher's
+
+```{r}
+curr_model = "phypat" # "phypat_PGL"
+against = "all" # "all" "fishers" "strainphlan"
+```
+
+```{r}
+if (against == "all"){
+  for_fisher_df = full_long_df %>% mutate(category = ifelse(is.na(category), "not_shared", category))
+} else if (against == "fishers") {
+  for_fisher_df = full_long_df %>% left_join(fishers_res) %>%
+                    mutate(category = ifelse((is.na(category) & in_fishers), "not_shared", category)) %>% 
+                    filter(!is.na(category))
+} else if (against == "strainphlan") {
+  for_fisher_df = full_long_df %>% filter(!is.na(category))
+}
+ 
+print(for_fisher_df %>% group_by(phenotype) %>% count())
+print(for_fisher_df %>% distinct(sgb, .keep_all = TRUE) %>% group_by(category) %>% count())
+
+for_fisher_df = for_fisher_df %>%
+                mutate(model = ifelse(value %in% c("both", curr_model), TRUE, FALSE)) %>%
+                mutate(model = factor(model, levels = c(TRUE, FALSE)),
+                       category = factor(category, levels = c("shared", "not_shared")))
+```
+
+## Fishers
+
+```{r}
+# curr_phenotype = "Capnophilic" # "Capnophilic" # "Anaerobe"
+res_df = data.frame()
+for (curr_phenotype in unique(for_fisher_df$phenotype)){
+  # message(curr_phenotype)
+  filt_df = for_fisher_df %>% filter(phenotype == curr_phenotype)
+  table = table(filt_df$category, filt_df$model)
+  test = fisher.test(table) # , alternative="greater")
+  res_row = data.frame(phenotype = curr_phenotype, odds_ratio = as.numeric(test$estimate), p = as.numeric(test$p.value))
+  res_df = bind_rows(res_df,
+                     res_row)
+}
+
+res_df = res_df %>% arrange(p) %>% mutate(fdr = p.adjust(p, method = "fdr"))
+res_df %>% head(5)
+```

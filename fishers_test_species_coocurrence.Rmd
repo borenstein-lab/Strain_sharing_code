@@ -1,0 +1,445 @@
+---
+title: "Fishers test both sites"
+output: html_notebook
+---
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "")
+```
+
+# Directories
+
+```{r Defining directories, messages = FALSE}
+# Folders
+# rm(list = ls())
+metadata_dir <- "../../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
+feat_table_dir <- "../../Data/GTDB_sensitive/"
+strainphlan_dir <- "../../StrainPhlan/"
+file = "fishers_co_005_005"
+
+prevalence_cutoff = 0.05
+avg_abundance_cutoff = 0.05
+unclassified_threshold = 80
+save_dir = paste0("../../Results/", file, "/")
+if (!file.exists(save_dir)){
+  dir.create(save_dir)
+}
+```
+
+# Libraries
+
+```{r Loading libraries, message = FALSE, warning = FALSE}
+library(readr)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(cowplot)
+library(dunn.test)
+library(rstatix)
+library(nsprcomp)
+library(circlize)
+library(kableExtra)
+library(tidytext)
+library(ggpmisc)
+library(extrafont)
+library(showtext)
+library(textshape)
+library(ggrepel)
+library(janitor)
+library(viridis)
+library(tibble)
+library(conflicted)
+conflicts_prefer(stats::fisher.test)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(tibble::column_to_rownames)
+font_add_google("Gafata")
+showtext_auto()
+options(scipen = 999)
+source('packages/raw_data_analysis_utils.R')
+source('packages/data_manipulations.R')
+source('packages/metaphlan_functions.R')
+source('packages/load_data.R')
+```
+
+# Load data
+
+```{r load and order, message = TRUE, warning = FALSE}
+meta = order_meta(metadata_dir, feat_table_dir, "valencia_metaphlan_res", FALSE)
+
+metaphlan <- read_tsv2(file.path(feat_table_dir, "../GTDB_sensitive/metaphlan4_taxonomy_METAPHLAN4.tsv"), cmnt = "#")
+
+t_metaphlan <- reorganize_metaphlan_table(metaphlan, 't')
+t_metaphlan_lst <- sep_one_organ_metaphlan(t_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+
+sp_metaphlan <- reorganize_metaphlan_table(metaphlan, 's')
+sp_metaphlan_lst <- sep_one_organ_metaphlan(sp_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+
+ge_metaphlan <- reorganize_metaphlan_table(metaphlan, 'g')
+ge_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+
+ph_metaphlan <- reorganize_metaphlan_table(metaphlan, 'p')
+ph_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+
+pre_metaphlan_lst = list("phylum" = ph_metaphlan_lst, "genus" = ge_metaphlan_lst, "species" = sp_metaphlan_lst, "sgb" = t_metaphlan_lst)
+
+sgb_map_df = read_delim(file.path("../../StrainPhlan/mpa_vJan21_CHOCOPhlAnSGB_202103_SGB2GTDB.tsv"), delim = "\t", show_col_types = FALSE, col_names = FALSE) 
+sgb_2_gtdb = sgb_map_df %>%
+              rename("sgb" = "X1", "taxonomy" = "X2") %>%
+              mutate(taxonomy = str_replace_all(taxonomy, " ", "_")) %>%
+              separate_rows(taxonomy, sep = ";") %>% 
+              separate(taxonomy, into = c("key", "value"), sep = "__") %>%
+              pivot_wider(names_from = key, values_from = value) %>%
+              mutate(sgb = paste0("t__", sgb)) %>%
+              mutate(s = str_replace_all(s, "_", " ")) %>%
+              mutate(s = if_else(s == "", g, s))
+
+# Order features tables and metadata (same samples and normalize)
+common = Reduce(intersect, list(sp_metaphlan_lst$vaginal$sample_id, sp_metaphlan_lst$rectal$sample_id, meta$sample_id))
+meta = meta %>% filter(sample_id %in% common)
+metaphlan_lst = list()
+for (level in names(pre_metaphlan_lst)){
+  lst = pre_metaphlan_lst[[level]]
+  for (organ in names(lst)){
+    print(paste0("level = ", level, ", organ = ", organ))
+    n_samples = df %>% nrow()
+    df = lst[[organ]]
+    filt_df = df %>% filter(sample_id %in% common)
+    filt_n_samples = filt_df %>% nrow()
+    message(paste0(filt_n_samples, " samples were filtered from ", n_samples))
+    features_filt_df = remove_rare_features(filt_df, filter_method = 'both', prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff)
+    metaphlan_lst[[level]][[organ]] = features_filt_df
+  }
+}
+```
+
+## Load GTDB names
+
+```{r}
+sgb_map_df = read_delim(file.path("../../StrainPhlan/mpa_vJan21_CHOCOPhlAnSGB_202103_SGB2GTDB.tsv"), delim = "\t", show_col_types = FALSE, col_names = FALSE) 
+sgb_2_gtdb = sgb_map_df %>%
+              rename("sgb" = "X1", "taxonomy" = "X2") %>%
+              mutate(taxonomy = str_replace_all(taxonomy, " ", "_")) %>%
+              separate_rows(taxonomy, sep = ";") %>% 
+              separate(taxonomy, into = c("key", "value"), sep = "__") %>%
+              pivot_wider(names_from = key, values_from = value) %>%
+              mutate(s = str_replace_all(s, "_", " ")) %>%
+              mutate(s = if_else(s == "", g, s))
+ncbi_gtdb_map_df <- read.table("../../../Taxonomy/bac120_metadata_r214.tsv", header = TRUE, sep = "\t", fill = TRUE, quote = "", stringsAsFactors = FALSE)
+ncbi_2_gtdb = ncbi_gtdb_map_df %>%
+              dplyr::select(ncbi_taxonomy, gtdb_taxonomy) %>%
+              as_tibble()
+```
+
+```{r}
+extract_taxonomy_level <- function(df, column, level) {
+  levels <- c("p", "g", "s")  
+  level_index <- match(level, levels)  
+  previous_level <- ifelse(level_index > 1, levels[level_index - 1], NA)  # Get previous level
+
+  new_df = df %>%
+    mutate(extracted = str_extract(!!sym(column), paste0(level, "__([^;]*)")) %>% str_remove(paste0(level, "__")), 
+           previous_value = if (!is.na(previous_level)) str_extract(!!sym(column), paste0(previous_level, "__([^;]*)")) %>% str_remove(paste0(previous_level, "__")) else NA,
+      extracted = if_else(extracted == "" | is.na(extracted), previous_value, extracted)) %>%
+    select(-previous_value)  
+  return(new_df)
+}
+```
+
+## Save params
+
+```{r}
+save_df_files = as.data.frame(c("meta_dir", metadata_dir, "feat_table_dir", feat_table_dir, "prevalence_cutoff", prevalence_cutoff, "avg_abundance_cutoff", avg_abundance_cutoff, "unclassified_threshold", unclassified_threshold))
+write.csv(save_df_files, paste0(save_dir, "input_params.csv"))
+```
+
+# Fishers test functions
+
+```{r}
+create_fisher_table = function(rectal_df, vaginal_df, tax, true_exsist_threshold){
+  both_df = rectal_df %>% 
+            select(any_of(c('sample_id', tax))) %>%
+            rename(!!as.name(paste0(tax, ".x")) := !!as.name(tax)) %>%
+    merge(vaginal_df %>% 
+            select(any_of(c('sample_id', tax))) %>%
+            rename(!!as.name(paste0(tax, ".y")) := !!as.name(tax)), all = TRUE, by = "sample_id") %>%
+    na.omit() %>%
+    mutate(across(where(~ is.numeric(.)), ~ ifelse(true_exsist_threshold >= .x, 0, 1))) %>%
+    mutate(across(where(is.numeric), ~ factor(., levels = c(1, 0))))
+    
+  freq_both_df = table(both_df[[2]], both_df[[3]])
+  return(freq_both_df)
+}
+
+get_odds_ratio = function(rectal_df, vaginal_df, true_exsist_threshold){
+  all_res = lapply(2:ncol(rectal_df), function(i){
+    tax = colnames(rectal_df)[i]
+    # print(paste0('- Working on taxa: ', tax, ', index: ', i))
+    if (tax %in% names(vaginal_df)){
+      fishers_df = create_fisher_table(rectal_df, vaginal_df, tax, true_exsist_threshold)
+        if (fishers_df["1","1"] >= 2){
+          test = fisher.test(fishers_df, alternative = "greater")
+          data.frame(rectal_tax = tax, vaginal_tax = tax, odds_ratio = as.numeric(test$estimate), p = as.numeric(test$p.value))
+          }
+        }
+      })
+      
+  all_res = do.call(rbind, all_res)
+  all_res = all_res %>% mutate(fdr = p.adjust(p, method = 'fdr'))
+  return(all_res %>% arrange(fdr))
+}
+```
+
+
+## Run
+
+```{r}
+thresholds_lst = c(0) 
+res_lst = list()
+for (threshold in thresholds_lst){
+  for (level in c("species", "sgb")){
+    print(paste0("Working on level ", level, ", with threshold: ", as.character(threshold)))
+    true_exsist_threshold = threshold / 100
+    lst = metaphlan_lst[[level]]
+    res_df = get_odds_ratio(lst[['rectal']], lst[['vaginal']], true_exsist_threshold)
+    res_lst[[paste0(level, "_", threshold)]] = res_df
+  }
+}
+```
+
+## Add GTDB name
+
+```{r}
+ord_res_lst = list()
+for (name in names(res_lst)){
+  message(name)
+  df = res_lst[[name]]
+  level = str_split(name, "_")[[1]][1]
+  if (level == "sgb"){
+    ord_df = df %>%
+              merge(sgb_2_gtdb %>% dplyr::select(sgb, s), by.x = "rectal_tax", by.y = "sgb") %>%
+              rename("gtdb_name" = "s") %>% arrange(fdr) %>%
+              rename("matched_gtdb" = "gtdb_name", "gtdb_name" = "rectal_tax")
+  } else {
+    taxonomy_level = substr(level, 1, 1)
+    level_tax_df = extract_taxonomy_level(ncbi_2_gtdb, "gtdb_taxonomy", taxonomy_level) %>%
+                    rename("gtdb_level_extracted" = "extracted")
+    level_tax_df = extract_taxonomy_level(level_tax_df, "ncbi_taxonomy", taxonomy_level) %>%
+                    rename("ncbi_level_extracted" = "extracted") 
+    final_level_tax_df = level_tax_df %>% 
+                    dplyr::select(contains("extracted")) %>%
+                    filter(across(all_of(grep("extracted", colnames(.), value = TRUE)), ~ !is.na(.))) %>%
+                    mutate(across(all_of(grep("extracted", colnames(.), value = TRUE)), ~ str_replace_all(., " ", "_"))) 
+    if (taxonomy_level == "s"){
+        final_level_tax_df = final_level_tax_df %>% arrange(nchar(gtdb_level_extracted))
+      }
+    final_level_tax_df = final_level_tax_df %>% distinct(ncbi_level_extracted, .keep_all = TRUE)
+    ord_df = df %>%
+            merge(final_level_tax_df, by.x = "rectal_tax", by.y = "ncbi_level_extracted") %>%
+            rename("gtdb_name" = "gtdb_level_extracted") %>% arrange(fdr) %>%
+            rename("matched_gtdb" = "gtdb_name", "gtdb_name" = "rectal_tax")
+  }
+  ord_res_lst[[name]] = ord_df
+}
+```
+
+## Save
+
+```{r}
+for (name in names(ord_res_lst)){
+  save_df_path = paste0(save_dir, "filtered_fishers_test_thresh_", name, ".csv")
+  save_save_df_path = paste0(save_dir, "supp_filtered_fishers_test_thresh_", name, ".csv")
+  df = ord_res_lst[[name]]
+  save_df = df %>% select(c(matched_gtdb, odds_ratio, p, fdr)) %>%
+            mutate(p = round(p, 3), fdr = round(fdr, 3), odds_ratio = round(odds_ratio, 3)) %>%
+            mutate(matched_gtdb = str_replace_all(matched_gtdb, "_", " ")) %>%
+            rename("GTDB species name" = "matched_gtdb", "Odds ratio" = "odds_ratio", "P. value" = "p", "FDR" = "fdr")
+  write.csv(file = save_df_path, df, quote = FALSE, row.names = FALSE)
+  write.csv(file = save_save_df_path, save_df, quote = FALSE, row.names = FALSE)
+}
+```
+
+
+# Plots
+
+## Volcano plots
+
+```{r}
+get_one_level_df = function(df){
+  ord_df = df %>%
+            # filter(rectal_tax == vaginal_tax) %>%
+            mutate(odds_ratio = as.numeric(odds_ratio)) %>%
+            mutate(color = case_when((fdr <= 0.05 & odds_ratio >= 1) ~ "sig", 
+                                      fdr > 0.05 ~ "not_sig",
+                                      TRUE ~ "not_sig")) %>%
+            mutate(gtdb_name = str_replace_all(gtdb_name, "_", " ")) 
+  return(ord_df)
+}
+
+get_volcano = function(df, name, fdr_ratio = 0.05, log = TRUE){
+  ord_df = get_one_level_df(df)
+  if (grepl("sgb", name)){
+    title = "" # "SGB"
+    ord_df = ord_df %>% mutate(matched_gtdb = gtdb_name)
+  } else {
+    title = "" 
+  }
+  ord_df = ord_df %>%
+      mutate(matched_gtdb = str_replace_all(matched_gtdb, "_", " ")) %>%
+      mutate(matched_gtdb = ifelse(matched_gtdb == "WLND01 sp945901095", "Bifidobacterium WLND01\nsp945901095", matched_gtdb))
+  if (log){
+    ord_df = ord_df %>%
+              mutate(odds_ratio = odds_ratio + 0.0001)
+  }
+  
+  plot = ggplot() +
+    geom_point(data = ord_df, aes(x = log(odds_ratio), y = -log(fdr), color = color), pch = 19, size = 2.5, alpha = 0.8) +
+    theme_bw(base_family = "Gafata") +
+    labs(x = "Log (Odds ratio)", y = "-Log (FDR)", title = title) +
+    scale_colour_manual(values = c("sig" = "#0A9396", "not_shared_sig" = "#E9D087", "not_sig" = "grey50")) +
+    geom_hline(yintercept = -log(0.05), linetype = "dashed", color = "grey") +
+    geom_text_repel(data = subset(ord_df, fdr <= fdr_ratio & odds_ratio > 1), 
+                       aes(x = log(odds_ratio), y = -log(fdr), label = matched_gtdb), 
+                       size = 10, family = "Gafata", box.padding = unit(0.35, "lines"),
+                       point.padding = unit(0.3, "lines"), force = 5, max.overlaps = Inf, lineheight = 0.3) +
+    theme(legend.position = "none") +
+    theme(text = element_text(size = 40))
+    return(plot)
+}
+```
+
+```{r}
+plots_lst = list()
+for (name in names(ord_res_lst)){
+  level = str_split(name, pattern = "_")[[1]][1]
+  threshold = str_split(name, pattern = "_")[[1]][2]
+  print(paste0("Working on level ", level, ", with threshold: ", as.character(threshold)))
+  df = ord_res_lst[[name]] 
+  if (grepl("sgb", name)){
+    df = df %>% select(-c(gtdb_name)) %>% rename("gtdb_name" = "matched_gtdb")
+  }
+  plot = get_volcano(df, name)
+  ggsave(paste0(save_dir, "filtered_metaphlan_", name, "_gtdb.png"), height = 4, width = 5, dpi = 300)
+}
+  
+```
+
+# Mantel and procrustes
+
+```{r}
+source("../packages/multi_omic_analysis.R")
+common = intersect(metaphlan_lst$species$vaginal$sample_id, metaphlan_lst$species$rectal$sample_id)
+# Dissmilarity
+bc_lst = list()
+for (curr_organ in c("rectal", "vaginal")){
+  bc = vegan::vegdist(metaphlan_lst$sgb[[curr_organ]][, -1], method = "bray") # %>% select(-UNCLASSIFIED)
+  bc_lst[[curr_organ]] <- as.data.frame(as.matrix(bc)) %>%
+            setNames(metaphlan_lst$species[[curr_organ]]$sample_id) %>%
+            mutate(sample_id = metaphlan_lst$species[[curr_organ]]$sample_id) %>%
+            select(c(sample_id, everything())) %>%
+            rownames_to_column(var = "rowname") %>%  
+            select(-rowname)  
+}
+
+mantel_test = run_mantel_test(bc_lst$rectal,
+                            bc_lst$vaginal,
+                            sample_id_column = "sample_id",
+                            corr_method = "spearman")
+print(mantel_test)
+```
+
+```{r}
+source('../packages/multi_omic_analysis.R')
+
+proc_test = run_procrustes_test(bc_lst$rectal,
+                                bc_lst$vaginal, 
+                                omic_name_X = "Rectal",
+                                omic_name_Y = "Vaginal",
+                                dist_metric = "BC",
+                                sample_id_column = 'sample_id')
+print(proc_test)
+ggsave(filename = paste0(save_dir, "proc_results.png"), plot = proc_test$plot, height = 3, width = 4, dpi = 300)
+```
+
+# Taxonomy plot  
+
+```{r}
+manual_colors_named = c('Lactobacillus crispatus' = '#9d0208', 
+                  'Lactobacillus gasseri' = '#FFD60A', 
+                  'Lactobacillus iners' = '#e85d04', 
+                  'Lachnocurva vaginae' = '#22577a', 
+                  'Gardnerella vaginalis' = '#5390D9', 
+                  'Lactobacillus jensenii' = '#E2D6B8',
+                  'Bifidobacterium breve' = '#AEC3B0', 
+                  'Bifidobacterium longum' = '#84A3A1',
+                  'Bifidobacterium bifidum' = '#50747B',
+                  'Streptococcus agalactiae' = '#ED8494',
+                  'Streptococcus anginosus' = '#A53860',
+                  'Fannyhessea vaginae' = '#99D98C',
+                  'Alloscardovia omnicolens' = '#52B69A',
+                  'Escherichia coli' = '#D9ED92', 
+                  'Prevotella bivia' = '#C77DFF',
+                  'Prevotella timonensis' = '#5A189A',
+                  'Others' = "#B1B8B6")
+```
+
+
+```{r}
+source('packages/taxonomy_plot.R')
+n = 15
+vag_df = metaphlan_lst$species$vaginal
+rec_df = metaphlan_lst$genus$rectal
+common = Reduce(intersect, list(meta$sample_id, vag_df$sample_id, rec_df$sample_id))
+samp_order = meta %>% filter(sample_id %in% common) %>% arrange(CST, score) %>% pull(sample_id)
+ord_meta = meta %>% 
+  filter(sample_id %in% common) %>% 
+  arrange(subCST, -score) %>% 
+  drop_na(subCST, sample_id) 
+ord_meta$sample_id <- factor(ord_meta$sample_id, levels = ord_meta$sample_id)
+samp_order = ord_meta %>% pull(sample_id)
+```
+
+## CST plot
+
+```{r}
+ord_meta = ord_meta %>%
+            mutate(x_pos = as.numeric(factor(sample_id, levels = unique(sample_id))))
+label_positions = ord_meta %>%
+                group_by(CST) %>%
+                summarise(x = mean(x_pos), label = dplyr::first(CST), .groups = "drop")
+cst_plot = ggplot(data = ord_meta) +
+  geom_tile(aes(x = sample_id, y = 1, fill = CST)) +
+  geom_text(data = label_positions, aes(x = x, y = 1, label = label), inherit.aes = FALSE, size = 10, family = "Gafata") +
+  theme_bw(base_family = "Gafata") +
+  scale_fill_manual(values = cst_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(y = "CST") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 35),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  theme(legend.position = "none")
+```
+
+## Genus species patched
+
+```{r}
+library(patchwork)
+vag_plot_lst = order_df_before_plot(vag_df, samp_order, "Vaginal", manual_colors_named, n)
+vag_plot_lst$long_df = vag_plot_lst$long_df %>%
+                        mutate(taxa_grouped = factor(taxa_grouped, levels = names(manual_colors_named)))
+vag_plot = barplot_taxonomy(vag_plot_lst$long_df, vag_plot_lst$all_colors, "Vaginal species", facet = FALSE) +
+             theme(axis.title.x = element_blank())
+
+rec_plot_lst = order_df_before_plot(rec_df, samp_order, "Rectal", manual_colors_named, n)
+rec_plot = barplot_taxonomy(rec_plot_lst$long_df, rec_plot_lst$all_colors, "Rectal genus", facet = FALSE)
+
+barplots_patched = (vag_plot / rec_plot) +
+                    plot_layout(guides = "collect") &
+                    theme(legend.position = "bottom")
+patched = cst_plot / barplots_patched +
+           plot_layout(heights = c(0.2, 3))
+ggsave(paste0("../../Results/", "sequencing_overview/", as.character(n), "_patched_genus_species_005_005.png"), patched, height = 5.5, width = 7, dpi = 300)
+```
