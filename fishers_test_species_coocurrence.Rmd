@@ -81,7 +81,7 @@ ge_metaphlan <- reorganize_metaphlan_table(metaphlan, 'g')
 ge_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 ph_metaphlan <- reorganize_metaphlan_table(metaphlan, 'p')
-ph_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+ph_metaphlan_lst <- sep_one_organ_metaphlan(ph_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 pre_metaphlan_lst = list("phylum" = ph_metaphlan_lst, "genus" = ge_metaphlan_lst, "species" = sp_metaphlan_lst, "sgb" = t_metaphlan_lst)
 
@@ -104,8 +104,8 @@ for (level in names(pre_metaphlan_lst)){
   lst = pre_metaphlan_lst[[level]]
   for (organ in names(lst)){
     print(paste0("level = ", level, ", organ = ", organ))
-    n_samples = df %>% nrow()
     df = lst[[organ]]
+    n_samples = df %>% nrow()
     filt_df = df %>% filter(sample_id %in% common)
     filt_n_samples = filt_df %>% nrow()
     message(paste0(filt_n_samples, " samples were filtered from ", n_samples))

@@ -44,7 +44,6 @@ library(ggplot2)
 library(tibble)
 library(tidyr)
 library(dplyr)
-library(vegan)
 library(stringr)  
 library(data.table)
 library(purrr)
@@ -89,7 +88,7 @@ ge_metaphlan <- reorganize_metaphlan_table(metaphlan, 'g')
 ge_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 ph_metaphlan <- reorganize_metaphlan_table(metaphlan, 'p')
-ph_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+ph_metaphlan_lst <- sep_one_organ_metaphlan(ph_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 metaphlan_lst = list("phylum" = ph_metaphlan_lst, "genus" = ge_metaphlan_lst, "species" = sp_metaphlan_lst, "sgb" = t_metaphlan_lst)
 
@@ -219,7 +218,7 @@ get_ngd_violin = function(ngd_curr_lst, alpha_false = 0.1, size_false = 1.5, sav
                                                 TRUE ~ "ns")) %>%
                       left_join(y_position_df, by = "species") %>% arrange(p.adj) %>%
                       left_join(sgb_2_gtdb %>% select(sgb, s) %>% mutate(species = str_replace_all(s, "_", " ")), by = "species") %>%
-                      arrange("p.adg") %>%
+                      arrange("p.adj") %>%
                       mutate(species = factor(species))
     
     ngd_for_plot = ngd_for_plot %>%
