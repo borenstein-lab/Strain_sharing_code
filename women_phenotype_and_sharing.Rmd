@@ -259,7 +259,6 @@ cst_plot = get_group_fishers(samples_with_sig_df, "CST", samples_res) +
 smoke_plot = get_group_fishers(samples_with_sig_df, "smoke", samples_res) +
             scale_fill_manual(values = c("0" = "#264653", "1" = "#E76F51"), name = "",
                               labels = c("Non-smoker", "Smoker")) 
-# ggsave(filename = paste0(save_dir, "smoke_proportions.png"), plot = smoke_plot, height = 3, width = 5, dpi = 300)
 
 both = (cst_plot | smoke_plot) +
               plot_annotation(tag_levels = 'A') & 

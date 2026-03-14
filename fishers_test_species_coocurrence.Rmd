@@ -13,15 +13,15 @@ knitr::opts_knit$set(root.dir = "")
 ```{r Defining directories, messages = FALSE}
 # Folders
 # rm(list = ls())
-metadata_dir <- "../../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
-feat_table_dir <- "../../Data/GTDB_sensitive/"
-strainphlan_dir <- "../../StrainPhlan/"
+metadata_dir <- "../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
+feat_table_dir <- "../Data/GTDB_sensitive/"
+strainphlan_dir <- "../StrainPhlan/"
 file = "fishers_co_005_005"
 
 prevalence_cutoff = 0.05
 avg_abundance_cutoff = 0.05
 unclassified_threshold = 80
-save_dir = paste0("../../Results/", file, "/")
+save_dir = paste0("../Results/", file, "/")
 if (!file.exists(save_dir)){
   dir.create(save_dir)
 }
