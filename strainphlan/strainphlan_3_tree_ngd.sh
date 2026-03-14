@@ -18,7 +18,7 @@ CLADE="$1"
 MARKER_IN_N_SAMPLES="$2" #1
 SAMPLE_WITH_N_MARKERS="$3" #8	     # Minimum number of markers a sample must have to be included in the tree
 
-TOP_DIR="../../..//strainphlan"	# Top directory for strainphlan analysis
+TOP_DIR="../../../../strainphlan"	# Top directory for strainphlan analysis
 BASE_DIR="../../../strainphlan/results/sample_with_n_markers_${SAMPLE_WITH_N_MARKERS}_marker_in_n_samples_${MARKER_IN_N_SAMPLES}"	# Base directory for processing
 TREE_DIR="${BASE_DIR}/tree_output"		# Output folder. Will contain all processed results and intermediate files.
 LONG_DIR="${BASE_DIR}/ngd_long"	# Output folder for long ngd files
