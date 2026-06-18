@@ -338,20 +338,26 @@ segment_all = segment_all %>% mutate(species = factor(species, levels = shared_t
 ```{r}
 labels = c("vaginal" = "Vaginal", "rectal" = "Rectal")
 get_pcoa_plot = function(df, segment_df, nrow = 5){
-  ggplot(data = df) +
-              geom_point(aes(x = PCoA1, y = PCoA2, fill = organ, shape = organ), size = 2, color = "#4B4C4C", alpha = 0.5) + 
-              scale_shape_manual(values = c(21, 24), labels = labels, name = "") +
-              scale_fill_manual(values = c("vaginal" = "#F09870", "rectal" = "#057D7F"), labels = labels, name = "") +
-              geom_segment(data = segment_df, aes(x = x, xend = xend, y = y, yend = yend), linewidth = 1.1, color = "#620508", lineend='round') +
-              theme_bw(base_family = "Gafata") +
-              facet_wrap(~species, nrow = nrow, scales = "free") +
-              theme(legend.position = "bottom") +
-              theme(strip.background = element_rect(fill = "#F8EBC3")) +
-              theme(text = element_text(size = 40)) +
-              theme(strip.text = element_text(size = 43)) +
-              theme(axis.text = element_blank(),
-                    axis.ticks = element_blank()) +
-              theme(legend.text = element_text(size = 30))
+  points_segment_df = df %>%
+                      left_join(segment_df, by = c("sgb", "sample_id", "species")) %>%
+                      filter(!is.na(x)) %>%
+                      select(-c(x, y, xend, yend))
+  pcoa_plot = ggplot(data = df) +
+    geom_point(aes(x = PCoA1, y = PCoA2, shape = organ), size = 2, color = "#4B4C4C", alpha = 0.3, fill = "grey") + 
+    scale_shape_manual(values = c(21, 24), labels = labels, name = "") +
+    # scale_fill_manual(values = c("vaginal" = "orange", "rectal" = "#057D7F"), labels = labels, name = "") +
+    geom_point(data = points_segment_df, aes(x = PCoA1, y = PCoA2, shape = organ), size = 2.5, color = "#620508", fill = "#620508", alpha = 1) + 
+    geom_segment(data = segment_df, aes(x = x, xend = xend, y = y, yend = yend), linewidth = 1.1, color = "#620508", lineend='round') +
+    theme_bw(base_family = "Gafata") +
+    facet_wrap(~species, nrow = nrow, scales = "free") +
+    theme(legend.position = "bottom") +
+    theme(strip.background = element_rect(fill = "#F8EBC3")) +
+    theme(text = element_text(size = 40)) +
+    theme(strip.text = element_text(size = 43)) +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank()) +
+    theme(legend.text = element_text(size = 30))
+  return(pcoa_plot)
 }
 pcoa_plot = get_pcoa_plot(pcoa_all, segment_all, nrow = 3)
 ggsave(pcoa_plot, file = paste0(save_dir, "all_samples_pcoa_distances_with_legend_transparent.png"), height = 7, width = 12, dpi = 300)
@@ -362,103 +368,78 @@ ggsave(pcoa_plot, file = paste0(save_dir, "all_samples_pcoa_distances_with_legen
 ### Functions
 
 ```{r}
-order_wide_matrix = function(zscore_df, color_column, order_vactor){
-  wide_df = zscore_df %>% 
-            mutate(species = str_replace_all(species, "_", " ")) %>%
-            filter(sample_1_organ != sample_2_organ) %>%
-            filter(same_person == TRUE) %>%
-            select(c(sample_id_1, !!as.name(color_column), species)) %>%
-            spread(species, !!as.name(color_column)) %>% column_to_rownames("sample_id_1") 
-  heat_df = wide_df[order(rowSums(is.na(wide_df)), decreasing = T),]
-  heat_df = heat_df[order_vector] #heat_df[order(colSums(heat_df), decreasing = T)]
+get_tile_heatmap = function(df, breaks_vec = c(-7.5, -4, -2, 0, 1)){
+  breaks <- seq(round(min(df$zscore, na.rm = TRUE), 1), round(max(df$zscore, na.rm = TRUE), 1), length.out = 6)  
+  pal = c("#CA6702","#fcc411","#fcf1d0","#C47EC4","#802780")
   
-  heat_mat = heat_df %>% t() %>% as.matrix()
-  return(heat_mat)
-}
-
-get_row_anno = function(ngd_long_all, order_vactor){
-  ngd_df = ngd_long_all %>% select(c(species, nGD, sample_id_1)) %>% mutate(species = str_replace_all(species, "_", " "))
-  ngd_df$species = factor(ngd_df$species, levels = order_vector)
-  ngd_lst = split(ngd_df$nGD, ngd_df$species)
-  lt = lapply(ngd_lst, function(x) data.frame(density(x)[c("x", "y")]))
-  return(lt)
-}
-
-get_heatmap = function(zscore_df, color_col, order_vactor){
-  main_color_mat = order_wide_matrix(zscore_df, color_col, order_vactor)
-  pval_mat = order_wide_matrix(zscore_df, "pval")
-  ngd_lst = get_row_anno(ngd_long_all)
-  costum_cell_fun = function(j, i, x, y, width, height, fill){
-    if(pval_mat[i, j] < 0.0001) {
-        grid.text("***", x, y)
-    } else if(pval_mat[i, j] < 0.001) {
-        grid.text("**", x, y)
-    } else if(pval_mat[i, j] < 0.01) {
-        grid.text("*", x, y)
-    }
-  }
+  tile_plot = ggplot(df, aes(x = sample_id_1, y = species, fill = zscore)) +
+    geom_tile() +
+    geom_text(aes(label = signif), color = "black", size = 12) +
+    scale_fill_gradientn(
+      colors = pal,
+      limits = c(min(breaks_vec), max(breaks_vec)),
+      breaks = breaks_vec) +
+    guides(fill = guide_colourbar(barwidth = unit(5, "cm"), barheight = unit(0.5, "cm"))) +
+    labs(x = "Sample ID", y = "", title = "") +
+    scale_y_discrete(position = "right") + 
+    theme_bw(base_family = "Gafata") +
+    # theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    theme(axis.text.x = element_blank()) +
+    theme(legend.position = "bottom") +
+    theme(text = element_text(size = 55)) +
+    theme(legend.title = element_text(vjust = 1)) +
+    theme(plot.margin = margin(-1.5, 0, 0, 0))
   
-  ## Plot
-  col_fun = colorRamp2(seq(min(main_color_mat, na.rm = TRUE), max(main_color_mat, na.rm = TRUE), length = 5), (c("#CA6702","#fcc411","#fcf1d0","#C47EC4","#802780")))
-  
-  ha = rowAnnotation(nGD = anno_joyplot(ngd_lst, width = unit(5, "cm"), 
-                                        gp = gpar(fill = "#778DA9"), 
-                                        transparency = 0.6),
-                            annotation_name_gp = gpar(fontsize = 16))
-  h = Heatmap(main_color_mat, name = color_col, col = col_fun, na_col = "#EBEDF0",
-              cell_fun = function(j, i, x, y, width, height, fill){
-                if (!is.na(pval_mat[i, j])){
-                  if(pval_mat[i, j] < 0.0001) {
-                      grid.text("***", x, y)
-                  } else if(pval_mat[i, j] < 0.001) {
-                      grid.text("**", x, y)
-                  } else if(pval_mat[i, j] < 0.01) {
-                      grid.text("*", x, y)
-                  }
-                } 
-              },
-              cluster_rows = FALSE, cluster_columns = FALSE, show_row_dend = FALSE, show_column_dend = FALSE,
-              row_names_gp = gpar(fontsize = 14), left_annotation = ha, 
-              row_names_max_width = unit(30, "cm"),
-              rect_gp = gpar(col = "white", lwd = 1),
-              heatmap_legend_param = list(legend_direction = "horizontal"))
-  
-  save_filname = paste0(save_dir, "sgbs_to_individual_heatmap_diff_organ_mean", color_col, "_times.png")
-  png(save_filname, 
-    width = 1300, height = 600)
-  draw(h, heatmap_legend_side = "bottom", padding = unit(c(2, 2, 2, 15), "mm"))
-  dev.off()
+  return(tile_plot)
 }
 ```
 
 ### Plot
 
 ```{r}
-conflicts_prefer(circlize::colorRamp2)
-ngd_long_all = do.call("rbind", ngd_lst) 
-n = 2
-levels_species_df = shared_to_random_lst_box$stats_results %>%
+levels_species_df = ngd_all_lst$stats_results %>%
                     mutate(species = str_replace_all(species, " ", "_"))
+ngd_long_all = do.call("rbind", ngd_lst) 
 ngd_long_all = ngd_long_all %>%
                 as.data.frame() %>%
+                filter(sample_1_organ != sample_2_organ) %>%
                 group_by(sgb) %>%
                 filter(sum(same_person == TRUE) >= n) %>%
                 ungroup()  
+stats_between <- ngd_long_all %>%
+                  filter(sample_id_1 != sample_id_2) %>%
+                  group_by(sgb) %>%
+                  summarise(mean_between = mean(nGD, na.rm = TRUE),
+                  sd_between = sd(nGD, na.rm = TRUE), .groups = "drop")
 zscore_df = ngd_long_all %>%
-            group_by(sgb) %>%
-            mutate(sd = sd(nGD), mean = mean(nGD)) %>%
-            mutate(zscore = (nGD - mean(nGD))/sd(nGD)) %>%
-            mutate(pval = pnorm(zscore, mean = 0, sd = 1, lower.tail = TRUE)) %>%
-            mutate(fdr = p.adjust (pval, method = 'BH')) %>%
-            ungroup(sgb) %>%
-            mutate(species = factor(species, levels = levels_species_df$species))
-            # mutate(species = str_replace_all(species, "_", " "))
+              left_join(stats_between, by = "sgb") %>%
+              mutate(within_sample = sample_id_1 == sample_id_2,
+                     zscore = if_else(within_sample, (nGD - mean_between) / sd_between, NA_real_)) %>%
+              group_by(sgb) %>%
+              mutate(pval = pnorm(zscore, mean = 0, sd = 1, lower.tail = TRUE)) %>%
+              ungroup(sgb) %>%
+              mutate(fdr = p.adjust(pval, method = 'BH')) %>%
+              mutate(species = factor(species, levels = levels_species_df$species))
+order_vector = zscore_df %>% 
+                arrange(sd_between) %>%
+                distinct(species) %>% 
+                mutate(species = str_replace_all(species, "_", " ")) %>% pull(species)
+levels_species = ngd_all_lst$stats_results %>%
+                    arrange(p.adj) %>% pull(species)
+tile_df = zscore_df %>%
+          mutate(species = str_replace_all(species, "_", " ")) %>%
+          filter(sample_1_organ != sample_2_organ) %>%
+          filter(same_person == TRUE) %>%
+          select(c(sample_id_1, species, zscore, fdr)) %>%
+          mutate(species = factor(species, levels = rev(levels_species))) %>%
+          arrange(species) %>%
+          mutate(signif = case_when(fdr <= 0.001 ~ "***",
+                                              fdr <= 0.01 ~ "**",
+                                              fdr <= 0.05 ~ "*",
+                                              TRUE ~ ""))
 
-ngd_mat = ngd_long_all %>%
-          select(c(species, nGD, sample_id_1))
-
-order_vector = zscore_df %>% arrange(sd) %>% distinct(species) %>% mutate(species = str_replace_all(species, "_", " ")) %>% pull(species)
-h_zscore = get_heatmap(zscore_df, "zscore", order_vector)
+t_plot = get_tile_heatmap(tile_df, breaks_vec = c(-5.8, -2, 0, 0.5, 1)) 
+ggsave(t_plot, file = file.path(save_dir, "zscore_heatmap.png"), width = 10, height = 6)
 ```
 
 
