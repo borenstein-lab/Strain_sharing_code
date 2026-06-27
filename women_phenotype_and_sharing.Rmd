@@ -1,5 +1,5 @@
 ---
-title: "Women phenotypes"
+title: "Traitar results"
 output: html_notebook
 ---
 
@@ -21,14 +21,19 @@ prevalence_cutoff = 0.05
 avg_abundance_cutoff = 0.05
 remove_rare = TRUE
 unclassified_threshold = 80
+n = 2
+
+res_dir = paste0("../../Results/revised_", as.character(unclassified_threshold), "_unclassif")
+name = paste0("wilcoxon_ngd_all_n_", as.character(n)) 
 
 metadata_dir <- "../../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
-feat_table_dir <- "../../Data/GTDB_sensitive/"
-stat_path = paste0("../../Results/strainphlan/ngd_plots_sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples)
-res_files = list("wilcoxon_ngd_all_n_4")
+feat_table_dir <- "../../Data/GTDB_sensitive"
+stat_path = file.path(res_dir, paste0("ngd_plots_sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples))
+res_files = file.path(stat_path, paste0(name, ".csv"))
 
+ngd_all_file = file.path(stat_path, paste0("ngd_all_n_", as.character(n), ".csv"))
 file = "phenotype_individuals"
-save_dir = paste0(stat_path, "/")
+save_dir = file.path(res_dir, file)
 if (!file.exists(save_dir)){
   dir.create(save_dir)
 }
@@ -41,6 +46,7 @@ library(readr)
 library(ggplot2)
 library(tibble)
 library(tidyr)
+library(ape)
 library(dplyr)
 library(vegan)
 library(stringr)  
@@ -56,10 +62,18 @@ library(chisq.posthoc.test)
 library(vegan)
 
 options(scipen = 999)
-source('packages/raw_data_analysis_utils.R')
-source('packages/data_manipulations.R')
-source('packages/metaphlan_functions.R')
-source('packages/load_data.R')
+source('../packages/raw_data_analysis_utils.R')
+source('../packages/categorical_metadata_analysis.R')
+source('../packages/continuous_metadata_analysis.R')
+source('../packages/data_manipulations.R')
+source('../packages/pregnancy_associations_plots.R')
+source('../packages/metaphlan_functions.R')
+source('../packages/load_data.R')
+
+cst_colors = c('I' = '#9d0208', 'II' = '#FFD60A', 'III' = '#e85d04', 'IV-A' = '#22577a', 'IV-B' = '#5390D9', 'IV-C' = '#2E214F', 'V' = '#E2D6B8')
+community_colors = c('I-A' = '#9d0208', 'I-B' = '#dc2f02', 'II' = '#FFD60A', 'III-A' = '#e85d04','III-B' = '#faa307','IV-A' = '#22577a', 'IV-B' = '#5390D9', 'IV-C0' = '#2E214F', 'IV-C1' = '#63479B','IV-C2' = '#8962C7', 'IV-C3' = '#AB7DDA', 'IV-C4' = '#DEC9E9', 'V' = '#E2D6B8')
+organ_colors = c("rectal" = '#FFB703', "vaginal" = '#EB5E00')
+parameter_colors = c("0" = "#669BBC", "1" = "#C1121F")
 ```
 
 # Load data
@@ -67,16 +81,11 @@ source('packages/load_data.R')
 ## Statistical results
 
 ```{r, message = FALSE}
-cat_lst = list()
-for (file in res_files){
-  category_file = paste0(stat_path, "/", file, ".csv")
-  cat = read.csv(category_file) %>%
-      as_tibble() %>%
-      mutate(category = ifelse(fdr <= 0.05, "shared", "not_shared")) %>%
-      dplyr::select(c(species, sgb, category)) %>%
-      mutate(sgb = str_replace(sgb, "t__", ""))
-  cat_lst[[file]] = cat
-}
+cat = read.csv(res_files) %>%
+    as_tibble() %>%
+    mutate(category = ifelse(fdr <= 0.05, "shared", "not_shared")) %>%
+    dplyr::select(c(species, sgb, category)) %>%
+    mutate(sgb = str_replace(sgb, "t__", ""))
 ```
 
 ## Load meta and taxonomy
@@ -84,12 +93,11 @@ for (file in res_files){
 ```{r}
 meta = order_meta(metadata_dir, feat_table_dir, "valencia_metaphlan_res", FALSE)
 
-metaphlan <- read_tsv2(file.path(feat_table_dir, "../GTDB_sensitive/metaphlan4_taxonomy_METAPHLAN4.tsv"), cmnt = "#")
+metaphlan <- read_tsv2(file.path(feat_table_dir, "metaphlan4_taxonomy_METAPHLAN4.tsv"), cmnt = "#")
 
 t_metaphlan <- reorganize_metaphlan_table(metaphlan, 't')
 t_metaphlan_lst <- sep_one_organ_metaphlan(t_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
-# Order features tables and metadata (same samples and normalize)
 orig_meta = meta
 common = Reduce(intersect, list(t_metaphlan_lst$vaginal$sample_id, t_metaphlan_lst$rectal$sample_id, meta$sample_id))
 print(length(common))
@@ -99,12 +107,11 @@ meta = meta %>% filter(sample_id %in% common)
 ## Load ngd long files
 
 ```{r, message=FALSE}
-n = 2
-ngd_all = read_csv(file = paste0(stat_path, "/ngd_all_df_with_n_1.csv"), show_col_types = FALSE)
-ngd_all = ngd_all %>% group_by(sgb) %>%
+ngd_all = read_csv(file = ngd_all_file, show_col_types = FALSE)
+ngd_all = ngd_all %>% 
+                group_by(sgb) %>%
                 filter(sum(same_person == TRUE) >= n) %>%
                 ungroup() %>%
-                select(-c("...1")) %>%
                 mutate(sgb = str_replace(sgb, "t__", ""))
 print(length(unique(ngd_all$sgb)))
 ```
@@ -118,19 +125,14 @@ meta_cols_to_check = c("patient_age", "BMI", "weight", "partner_age",
                        "veg", "vegan", "probiotics", "antibiotics_in_the_past_3_months", "smoke",
                        "CST", "lacto_bin")
 
-meta_lst = list()
-for (name in names(cat_lst)){
-  cat = cat_lst[[name]]
-  species_sig_shared = cat %>% select(c(sgb, category))
-  meta_with_sig_df = ngd_all %>%
-              left_join(species_sig_shared, by = "sgb") %>%
-              mutate(category = ifelse(is.na(category), "not_shared", category)) %>%
-              group_by(sample_id_1) %>%
-              summarize(sig_count = sum(category == "shared" & sample_id_1 == sample_id_2)) %>% arrange(-sig_count) %>%
-              mutate(sig_bin = ifelse(sig_count >= 1, 1, 0)) %>%
-              left_join(meta %>% select(all_of(c("sample_id", meta_cols_to_check))), by = c("sample_id_1" = "sample_id"))
-  meta_lst[[name]] = meta_with_sig_df
-}
+species_sig_shared = cat %>% filter(species %in% unique(ngd_all %>% mutate(species = str_replace_all(species, "_", " ")) %>% pull(species))) %>% select(c(sgb, category))
+meta_with_sig_df = ngd_all %>%
+            left_join(species_sig_shared, by = "sgb") %>%
+            mutate(category = ifelse(is.na(category), "not_shared", category)) %>%
+            group_by(sample_id_1) %>%
+            summarize(sig_count = sum(category == "shared" & sample_id_1 == sample_id_2)) %>% arrange(-sig_count) %>%
+            mutate(sig_bin = ifelse(sig_count >= 1, 1, 0)) %>%
+            left_join(meta %>% select(all_of(c("sample_id", meta_cols_to_check))), by = c("sample_id_1" = "sample_id"))
 ```
 
 # Function
@@ -142,24 +144,52 @@ get_samples_with_sig_traits = function(df = samples_with_sig_df, col_1 = "sig_bi
           filter(!is.na(!!as.name(col_2)))
   if (is.factor(df[[col_2]]) | is.character(df[[col_2]])){
     if (col_2_features_num == 2){
+      if (col_2 == "lacto_bin"){
+        df = df %>% mutate(lacto_bin = if_else(lacto_bin == "lactobacillus", 1, 0)) 
+      }
       df = df %>% mutate(across(everything(), ~ factor(., levels = c(1, 0))))
     }
     freq_both_df = table(df %>% pull(col_1), df %>% pull(col_2))
-    test = fisher.test(freq_both_df)
-    res = data.frame(col = col_2, odds_ratio = 0,# as.numeric(test$estimate), 
-                     p = as.numeric(test$p.value), test = "fishers")
+    test_res = fisher.test(freq_both_df)
+    res = tibble(col              = col_2,
+                test              = "Fisher's test",
+                shared_positive   = freq_both_df[1,1],
+                shared_negative   = freq_both_df[1,2],
+                unshared_positive = freq_both_df[2,1],
+                unshared_negative = freq_both_df[2,2],
+                shared_mean       = NA_integer_,
+                shared_sd         = NA_integer_,
+                unshared_mean     = NA_integer_,
+                unshared_sd       = NA_integer_,
+                # odds_ratio        = test$estimate,
+                p                 = test_res$p.value)
+    if (col_2_features_num > 2) {
+      res = res %>% mutate(across(contains("shared"), ~ NA_integer_))
+    }
   } else if (col_2_features_num > 2){
     col_2_0_values = df %>% filter(!!as.name(col_1) == 0) %>% pull(col_2)
     col_2_1_values = df %>% filter(!!as.name(col_1) == 1) %>% pull(col_2)
     normality0 = shapiro.test(col_2_0_values)
     normality1 = shapiro.test(col_2_1_values)
     if (normality0$p.value <= 0.05 | normality1$p.value <= 0.05){
-      test = wilcox.test(col_2_0_values, col_2_1_values, alternative = "two.sided")
-      res = data.frame(col = col_2, odds_ratio = as.numeric(test$statistic), p = as.numeric(test$p.value), test = "wilcoxon")
+      test_res = wilcox.test(col_2_0_values, col_2_1_values, alternative = "two.sided")
+      test_name = "Wilcoxon Rank Sum"
     } else {
-      test = t.test(col_2_0_values, col_2_1_values, data = df, alternative = "two.sided")
-      res = data.frame(col = col_2, odds_ratio = as.numeric(test$statistic), p = as.numeric(test$p.value), test = "t.test")
+      test_res = t.test(col_2_0_values, col_2_1_values, data = df, alternative = "two.sided")
+      test_name = "T. test"
     }
+    res = tibble(col            = col_2,
+              test              = test_name,
+              shared_positive   = NA_integer_,
+              shared_negative   = NA_integer_,
+              unshared_positive = NA_integer_,
+              unshared_negative = NA_integer_,
+              shared_mean       = mean(col_2_1_values, na.rm = TRUE),
+              shared_sd         = sd(col_2_1_values, na.rm = TRUE),
+              unshared_mean     = mean(col_2_0_values, na.rm = TRUE),
+              unshared_sd       = sd(col_2_0_values, na.rm = TRUE),
+              # odds_ratio      = NA_integer_,
+              p                 = test_res$p.value)
   }
   return(res)
 }
@@ -168,34 +198,35 @@ get_samples_with_sig_traits = function(df = samples_with_sig_df, col_1 = "sig_bi
 # Test
 
 ```{r}
-meta_stats_res_lst = list()
-
-for (name in names(meta_lst)){
-  print(name)
-  samples_with_sig_df = meta_lst[[name]]
-  samples_res = data.frame()
-  for (col in meta_cols_to_check){
-    curr_res = get_samples_with_sig_traits(samples_with_sig_df, "sig_bin", col)
-    samples_res = bind_rows(samples_res, curr_res)
-  }
-  samples_res = samples_res %>% arrange(p) %>%
-              mutate(fdr = p.adjust(p, "fdr")) %>%
-              mutate(p = round(p, 4), fdr = round(fdr, 4))
-  message(paste0(name, " had ", samples_res %>% filter(fdr <= 0.1) %>% nrow(), " significant comparisons"))
-  message(paste0("Significant columns are: ", paste0(samples_res %>% filter(fdr <= 0.1) %>% pull(col), collapse = ", ")))
-  meta_stats_res_lst[[name]] = samples_res
-  save_name = sub("^[^_]*_", "", name)
-  write_csv(samples_res, file = paste0(stat_path, "/meta_sig_", save_name, ".csv"), quote = "none")
+samples_with_sig_df = meta_with_sig_df %>%
+                      mutate(across(where(is.factor), ~ factor(., levels = c(1, 0)))) %>%
+                      mutate(sig_bin = as.integer(as.character(sig_bin)))
+samples_res = data.frame()
+for (col in meta_cols_to_check){
+  # curr_res = test_col(samples_with_sig_df, col)
+  curr_res = get_samples_with_sig_traits(samples_with_sig_df, "sig_bin", col)
+  samples_res = bind_rows(samples_res, curr_res)
 }
+samples_res = samples_res %>% arrange(p) %>%
+            mutate(fdr = p.adjust(p, "fdr")) %>% as.tibble()
+save_res = samples_res %>%
+            rename_with(str_to_title) %>%
+            rename_with(~ str_replace_all(.x, "_", " ")) %>%
+            mutate(Col = str_replace_all(Col, "_", " ")) %>%
+            rename("Metadata feature" = "Col") %>%
+            mutate(across(where(is.numeric), round, digits = 3))
+message(paste0(name, " had ", samples_res %>% filter(fdr <= 0.1) %>% nrow(), " significant comparisons"))
+message(paste0("Significant columns are: ", paste0(samples_res %>% filter(fdr <= 0.1) %>% pull(col), collapse = ", ")))
+write_csv(save_res, file = file.path(stat_path, paste0("meta_sig_", as.character(curr_n), ".csv")), quote = "none")
+print(save_res)
 ```
 
 ## Post hoc test
 
 ```{r}
-name = "wilcoxon_ngd_all_n_4"
-sig_meta_cols = meta_stats_res_lst[[name]] %>%
-            filter(fdr <= 0.1 & test == "fishers") %>% pull(col)
-post_hoc_df = meta_lst[[name]] %>%
+sig_meta_cols = samples_res %>%
+            filter(fdr <= 0.1 & test == "Fisher's test") %>% pull(col)
+post_hoc_df = meta_with_sig_df %>%
             select(c("sample_id_1", sig_meta_cols, "sig_bin")) %>%
             # select(-c(smoke)) %>%
             mutate(CST = factor(CST)) %>%
@@ -211,6 +242,7 @@ pairwise_fisher_test(xtab, p.adjust.method = "fdr") %>%
 get_group_fishers = function(df, curr_col, samples_res){
   p_val = samples_res %>% 
     filter(col == curr_col) %>% 
+    mutate(fdr = round(fdr, 3)) %>%
     pull(fdr)
   df = df %>% 
     select(c(sig_bin, !!as.name(curr_col))) %>%
@@ -222,7 +254,7 @@ get_group_fishers = function(df, curr_col, samples_res){
             position = position_fill(vjust = 0.5), color = "white", size = 12, family = "Gafata") +
      # geom_signif(comparisons = list(c(0, 1)), annotations = p_val, y_position  = 1.01)+# ,xmin="IM", xmax="REF") +
      scale_x_discrete(labels = c("Women without\nshared events", "Women with\nshared events")) +
-     labs(y = "Proportion", x = "", title = paste0("FDR = ", p_val)) +
+     labs(y = "Proportion", x = "", title = paste0("FDR-corrected P = ", p_val)) +
      theme_bw(base_family = "Gafata") +
      theme(text = element_text(size = 35)) +
      theme(legend.text = element_text(size=30)) +
@@ -243,57 +275,31 @@ get_wilcox_plot = function(df, curr_col, title){
             xlab("") +
             # theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
             theme(legend.position = "none") +
-            theme(text = element_text(size = 40))
+            theme(text = element_text(size = 50))
     return(plot)
 }
 ```
-
-### Save sig results
 
 ```{r}
 library(patchwork)
 cst_plot = get_group_fishers(samples_with_sig_df, "CST", samples_res) +
             scale_fill_manual(values = cst_colors, name = "CST") 
-# ggsave(filename = paste0(save_dir, "cst_proportions.png"), plot = cst_plot, height = 3, width = 5, dpi = 300)
+ggsave(filename = file.path(save_dir, "cst_proportions.png"), plot = cst_plot, height = 5, width = 4, dpi = 300)
 
 smoke_plot = get_group_fishers(samples_with_sig_df, "smoke", samples_res) +
             scale_fill_manual(values = c("0" = "#264653", "1" = "#E76F51"), name = "",
-                              labels = c("Non-smoker", "Smoker")) 
+                              labels = c("Non-smoker", "Smoker"))
+# ggsave(filename = paste0(save_dir, "smoke_proportions.png"), plot = smoke_plot, height = 3, width = 5, dpi = 300)
 
 both = (cst_plot | smoke_plot) +
-              plot_annotation(tag_levels = 'A') & 
+              plot_annotation(tag_levels = 'A') +
               theme(plot.tag = element_text(size = 50))
-ggsave(plot = both, filename = paste0(stat_path, "/meta_sig_patched_plot_4.png"), width = 8, height = 5.2, dpi = 300)
+ggsave(plot = both, filename = file.path(stat_path, "meta_sig_patched_plot_4.png"), width = 8, height = 5.2, dpi = 300)
 ```
 
-```{r}
-library(rstatix)
-pair_df = samples_with_sig_df %>% 
-  filter(!is.na(CST)) %>%
-  mutate(sig_bin = factor(sig_bin, levels = c(0, 1))) %>%
-  mutate(CST = factor(CST))
-xtab <- table(pair_df$sig_bin, pair_df$CST)
-pairwise_fisher_test(xtab, p.adjust.method = "fdr") %>%
-        arrange(p.adj)
-rstatix::pairwise_fisher_test(data = pair_df, formula = sig_bin ~ CST)
-```
 
-```{r}
-plots_lst = list()
-for (curr_col in meta_cols_to_check){
-  stat_method = samples_res %>% filter(col == curr_col) %>% pull(test)
-  if (samples_res %>% filter(col == curr_col) %>% pull(fdr) <= 0.05){
-    if (stat_method == "wilcoxon"){
-    plot_df = samples_with_sig_df %>% 
-                mutate(sig_bin = factor(sig_bin)) %>% 
-                filter(!is.na(!!as.name(curr_col)))
-    plot = get_wilcox_plot(plot_df, curr_col)
-    plots_lst[[curr_col]] = plot
-    ggsave(plot, filename = paste0(save_dir, curr_col, ".png"), height = 4.5, width = 5, dpi = 300)
-    }
-  }
-}
-```
+
+
 
 
 

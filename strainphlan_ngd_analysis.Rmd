@@ -14,22 +14,22 @@ print(getwd())
 ```{r Defining directories, messages = FALSE}
 # Folders
 rm(list = ls())
-sample_with_n_markers = 8
-marker_in_n_samples = 1
+metadata_dir <- "../../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
+feat_table_dir <- "../../Data/GTDB_sensitive"
 prevalence_cutoff = 0.05
 avg_abundance_cutoff = 0.05
 remove_rare = TRUE
 unclassified_threshold = 80
+sample_with_n_markers = 8
+marker_in_n_samples = 1
+n = 2
+path = file.path("../../StrainPhlan", paste0("sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_",marker_in_n_samples))
+long_path = file.path(path, "ngd_long")
+wide_path = file.path(path, "ngd_mat")
 
-metadata_dir <- "../../Data/Metadata/fertility_meta_with_new_infer_causes_double_causes.csv"
-feat_table_dir <- "../../Data/GTDB_sensitive/"
-path = paste0("../../StrainPhlan/sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples, "/")
-long_path = paste0(path, "ngd_long/")
-wide_path = paste0(path, "ngd_mat/")
+res_dir = paste0("../../Results/revised_", as.character(unclassified_threshold), "_unclassif")
 
-file = paste0("ngd_plots_sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples)
-
-save_dir = paste0("../../Results/strainphlan/", file, "/")
+save_dir = file.path(res_dir, paste0("ngd_plots_sample_with_n_markers_", sample_with_n_markers, "_marker_in_n_samples_", marker_in_n_samples))
 if (!file.exists(save_dir)){
   dir.create(save_dir)
 }
@@ -38,17 +38,25 @@ if (!file.exists(save_dir)){
 # Libraries
 
 ```{r Loading libraries, message = FALSE, warning = FALSE}
+# library(tidyverse)
 library(readr)
+library(ggridges)
 library(ggbeeswarm)
 library(ggplot2)
 library(tibble)
 library(tidyr)
+library(ape)
 library(dplyr)
+library(cowplot)
+library(vegan)
+library(kableExtra)
 library(stringr)  
 library(data.table)
 library(purrr)
+library(kableExtra)
 library(ggpmisc)
 library(ggpubr)
+library(fmsb)
 library(ggforce)
 library(rstatix)
 library(colorRamp2)
@@ -59,24 +67,28 @@ font_add_google("Gafata")
 showtext_auto()
 library(chisq.posthoc.test)
 library(vegan)
-conflicted::conflict_prefer("filter", "dplyr")
 
 options(scipen = 999)
 source('packages/raw_data_analysis_utils.R')
 source('packages/data_manipulations.R')
 source('packages/metaphlan_functions.R')
 source('packages/load_data.R')
+source('packages/strainphlan_res_functions.R')
+source('packages/strainphlan_review_additions.R')
+
+
+cst_colors = c('I' = '#9d0208', 'II' = '#FFD60A', 'III' = '#e85d04', 'IV-A' = '#22577a', 'IV-B' = '#5390D9', 'IV-C' = '#2E214F', 'V' = '#E2D6B8')
+community_colors = c('I-A' = '#9d0208', 'I-B' = '#dc2f02', 'II' = '#FFD60A', 'III-A' = '#e85d04','III-B' = '#faa307','IV-A' = '#22577a', 'IV-B' = '#5390D9', 'IV-C0' = '#2E214F', 'IV-C1' = '#63479B','IV-C2' = '#8962C7', 'IV-C3' = '#AB7DDA', 'IV-C4' = '#DEC9E9', 'V' = '#E2D6B8')
+organ_colors = c("rectal" = '#FFB703', "vaginal" = '#EB5E00')
+parameter_colors = c("0" = "#669BBC", "1" = "#C1121F")
 ```
 
-# Data loading
-
-## metaphlan compositional data
+# Load composition data
 
 ```{r load and order, message = TRUE, warning = FALSE}
-# meta = order_meta(metadata_dir, feat_table_dir, "valencia_metaphlan_res", FALSE, remove_samples = c(""))
 meta = order_meta(metadata_dir, feat_table_dir, "valencia_metaphlan_res", FALSE)
 
-metaphlan <- read_tsv2(file.path(feat_table_dir, "../GTDB_sensitive/metaphlan4_taxonomy_METAPHLAN4.tsv"), cmnt = "#")
+metaphlan <- read_tsv2(file.path(feat_table_dir, "metaphlan4_taxonomy_METAPHLAN4.tsv"), cmnt = "#")
 
 t_metaphlan <- reorganize_metaphlan_table(metaphlan, 't')
 t_metaphlan_lst <- sep_one_organ_metaphlan(t_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
@@ -88,11 +100,10 @@ ge_metaphlan <- reorganize_metaphlan_table(metaphlan, 'g')
 ge_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 ph_metaphlan <- reorganize_metaphlan_table(metaphlan, 'p')
-ph_metaphlan_lst <- sep_one_organ_metaphlan(ph_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
+ph_metaphlan_lst <- sep_one_organ_metaphlan(ge_metaphlan, rem = TRUE, remove_rare = FALSE, prevalence_cutoff = prevalence_cutoff, avg_abundance_cutoff = avg_abundance_cutoff, remove_unclassified_column = TRUE, unclassified_threshold = unclassified_threshold)
 
 metaphlan_lst = list("phylum" = ph_metaphlan_lst, "genus" = ge_metaphlan_lst, "species" = sp_metaphlan_lst, "sgb" = t_metaphlan_lst)
 
-# Order features tables and metadata (same samples and normalize)
 orig_meta = meta
 common = Reduce(intersect, list(sp_metaphlan_lst$vaginal$sample_id, sp_metaphlan_lst$rectal$sample_id, meta$sample_id))
 meta = meta %>% filter(sample_id %in% common)
@@ -100,8 +111,8 @@ for (level in names(metaphlan_lst)){
   lst = metaphlan_lst[[level]]
   for (organ in names(lst)){
     print(paste0("level = ", level, ", organ = ", organ))
-    df = lst[[organ]]
     n_samples = df %>% nrow()
+    df = lst[[organ]]
     filt_df = df %>% filter(sample_id %in% common)
     filt_n_samples = filt_df %>% nrow()
     message(paste0(filt_n_samples, " samples were filtered from ", n_samples))
@@ -111,12 +122,13 @@ for (level in names(metaphlan_lst)){
 }
 ```
 
-## SGB mapping
+# Load sgb mapping
 
 ```{r}
 sgb_map_df = read_delim(file.path("../../StrainPhlan/mpa_vJan21_CHOCOPhlAnSGB_202103_SGB2GTDB.tsv"), delim = "\t", show_col_types = FALSE, col_names = FALSE) 
 sgb_2_gtdb = sgb_map_df %>%
               rename("sgb" = "X1", "taxonomy" = "X2") %>%
+              # mutate(sgb = str_replace(sgb, "_group", "")) %>%
               mutate(taxonomy = str_replace_all(taxonomy, " ", "_")) %>%
               separate_rows(taxonomy, sep = ";") %>% 
               separate(taxonomy, into = c("key", "value"), sep = "__") %>%
@@ -124,9 +136,9 @@ sgb_2_gtdb = sgb_map_df %>%
                 mutate(sgb = paste0("t__", sgb))
 ```
 
-## nGD files
+# Load nGD files
 
-### Load long ngd
+## Load long ngd
 
 ```{r}
 vaginal_samples = metaphlan_lst$sgb$vaginal$sample_id
@@ -136,9 +148,8 @@ union_samples = dplyr::union(vaginal_samples, rectal_samples)
 
 
 ```{r, message=FALSE}
-n = 2
-all_files <- paste0(long_path, list.files(long_path, recursive = FALSE))
-files_only <- all_files[!file.info(all_files)$isdir]
+all_files <- list.files(long_path, recursive = FALSE)
+files_only <- file.path(long_path, all_files) 
 ngd_lst = list()
 
 for (file_path in files_only){
@@ -160,18 +171,18 @@ for (file_path in files_only){
         left_join(sgb_2_gtdb %>% select(sgb, s), by = "sgb") %>%
         rename("species" = "s")
         
-  if (sum(df$same_person, na.rm = TRUE) >= n) { 
+  if (sum(df$same_person, na.rm = TRUE) >= n) { # (name %in% fishers_sgbs){
     ngd_lst[[name]] = df
   }
 }
 print(length(ngd_lst))
 ```
 
-### Wide ngd df
+## Load wide ngd df
 
 ```{r}
-all_files <- paste0(wide_path, list.files(wide_path, recursive = FALSE))
-files_only <- all_files[!file.info(all_files)$isdir]
+all_files <- list.files(wide_path, recursive = FALSE)
+files_only <- file.path(wide_path, all_files) 
 mat_lst = list()
 
 for (file_path in files_only){
@@ -188,87 +199,17 @@ for (file_path in files_only){
 
 # Results
 
-## Violin beeswarm
+## ngd all plot
 
 ```{r}
-get_ngd_violin = function(ngd_curr_lst, alpha_false = 0.1, size_false = 1.5, save_file_name = "ngd_all", n = 2, box = FALSE){
-    # Statistical analysis
-    ngd_all = do.call("rbind", ngd_curr_lst)
-    ngd_for_plot = ngd_all %>%
-                as.data.frame() %>%
-                group_by(sgb) %>%
-                filter(sum(same_person == TRUE) >= n) %>%
-                ungroup() %>%
-                mutate(species = str_replace_all(species, "_", " ")) %>%
-                mutate(same_person = factor(same_person, levels = c(FALSE, TRUE))) %>%
-                select(-c(sample_1, sample_2)) %>%
-                filter(sample_1_organ != sample_2_organ) 
-    y_position_df = ngd_for_plot %>%
-                group_by(species) %>%
-                summarise(y_position = max(nGD) - 0.0005) %>% #  - 0.005
-                ungroup()
-    wilcox_results = ngd_for_plot %>%
-                      group_by(species) %>%
-                      wilcox_test(nGD ~ same_person) %>%
-                      ungroup() %>%
-                      mutate(p.adj = p.adjust(p, method = 'fdr')) %>%
-                      mutate(signif = case_when(p.adj < 0.001 ~ "***", 
-                                                p.adj < 0.01 ~ "**",
-                                                p.adj < 0.05 ~ "*",
-                                                TRUE ~ "ns")) %>%
-                      left_join(y_position_df, by = "species") %>% arrange(p.adj) %>%
-                      left_join(sgb_2_gtdb %>% select(sgb, s) %>% mutate(species = str_replace_all(s, "_", " ")), by = "species") %>%
-                      arrange("p.adj") %>%
-                      mutate(species = factor(species))
-    
-    ngd_for_plot = ngd_for_plot %>%
-                    mutate(species = factor(species, levels = wilcox_results$species))
-    
-    # Plot
-    ngd_all_plot = ggplot(data = ngd_for_plot, aes(x = same_person, y = nGD)) 
-    
-    if (box){
-      save_wilcox_df = wilcox_results %>% select(c(species, sgb, n1, n2, p, p.adj, signif)) %>%
-                      rename("fdr" = "p.adj")
-      write.csv(save_wilcox_df, file = paste0(save_dir, "wilcoxon_", save_file_name, ".csv"))
-      message(paste0("Wilcoxon saved to ", "wilcoxon_", save_file_name, ".csv"))
-    
-      ngd_all_plot = ngd_all_plot +
-                      geom_boxplot(color = 'black', fill = '#D9E1EC', alpha = 0.7, outlier.shape = NA) +
-                      geom_point(aes(fill = same_person, alpha = same_person, size = same_person), color = 'black', shape = 21, position = position_jitter(width = 0.2))
-    } else {
-      ngd_all_plot = ngd_all_plot +
-                      geom_beeswarm(aes(fill = same_person, alpha = same_person, size = same_person), color = 'black', groupOnX = TRUE, pch = 21)
-    }
-    
-    ngd_all_plot = ngd_all_plot +
-                    theme_bw(base_family = "Gafata") +
-                    facet_wrap(~species, nrow = 3, scales = "free_y") +
-                    stat_pvalue_manual(wilcox_results, label = "signif", y.position = "y_position", size = 15, hide.ns = TRUE) +
-                    labs(x = "Same woman", y = "nGD") +
-                    scale_fill_manual(values = c("#0A9396", "orange"), name = "") +
-                    scale_alpha_manual(values = c(alpha_false, 0.8), name = "") +
-                    scale_size_manual(values = c(size_false, 2.5), name = "") +
-                    theme(legend.position = "none") +
-                    theme(strip.background = element_rect(fill = "#FEFCFD")) +
-                    scale_x_discrete(drop = FALSE) +
-                    theme(axis.title = element_text(size = 60),
-                          axis.text = element_text(size = 50),
-                          strip.text = element_text(size = 40))
-    return(list("plot" = ngd_all_plot, "stats_results" = wilcox_results))
-}
-```
-
-### Plot
-
-```{r}
-ngd_all_lst_violin = get_ngd_violin(ngd_lst, box = FALSE)
-ggsave(ngd_all_lst_violin[["plot"]], file = paste0(save_dir, "ngd_all_violin.png"), height = 7, width = 15, dpi = 300)
+source('../packages/strainphlan_res_functions.R')
+ngd_all_lst = get_ngd_violin(ngd_lst, n = n, nrow = 5)
+ngd_all_lst$plot = ngd_all_lst$plot +
+                    theme(plot.tag = element_text(size = 80, family = "Gafata"))
+ggsave(ngd_all_lst[["plot"]], file = file.path(save_dir, paste0("ngd_all_violin_", as.character(n), ".png")), height = 12, width = 15)
 ```
 
 ## PCoA plot
-
-### Preparation
 
 ```{r}
 pcoa_lst = list()
@@ -278,9 +219,9 @@ for (name in names(ngd_lst)){
   long_df = ngd_lst[[name]]
   wide_df = mat_lst[[name]]
   ord_long_df = long_df %>%
-            filter(sample_1_organ != sample_2_organ)
-  all_samples = dplyr::union(ord_long_df$sample_1, ord_long_df$sample_2)
+                filter(sample_1_organ != sample_2_organ) # %>%
   ord_wide_df = wide_df %>%
+                
                 column_to_rownames("ID")
   dist = as.dist(ord_wide_df)
   pcoa_res = pcoa(dist)
@@ -296,7 +237,6 @@ for (name in names(ngd_lst)){
                   mutate(species = unique(long_df$species)) %>%
                   mutate(species = str_replace_all(species, "_", " "))
   pcoa_lst[[name]] = pcoa_values
-
   # Segments data
   label_samples = long_df %>% filter(same_person == TRUE) %>% pull(sample_id_1)
   seg_df = pcoa_values %>% filter(sample_id %in% label_samples) 
@@ -319,7 +259,6 @@ filter_sgbs = function(df, sgbs){
   return(filt_df)
 }
 
-n = 2
 pcoa_all = do.call("rbind", pcoa_lst)
 segment_all = do.call("rbind", segment_lst)
 ngd_for_plot = ngd_all %>%
@@ -328,78 +267,93 @@ ngd_for_plot = ngd_all %>%
                 filter(sum(same_person == TRUE) >= n) %>%
                 ungroup()
 pcoa_all = filter_sgbs(pcoa_all, unique(ngd_for_plot$sgb))
-pcoa_all = pcoa_all %>% mutate(species = factor(species, levels = shared_to_random_lst_box$stats_results$species))
+pcoa_all = pcoa_all %>% mutate(species = factor(species, levels = ngd_all_lst$stats_results$species))
 segment_all = filter_sgbs(segment_all, unique(ngd_for_plot$sgb))
-segment_all = segment_all %>% mutate(species = factor(species, levels = shared_to_random_lst_box$stats_results$species))
+segment_all = segment_all %>% mutate(species = factor(species, levels = ngd_all_lst$stats_results$species))
 ```
 
-### Plot
-
 ```{r}
+pcoa_all = bind_rows(pcoa_lst, .id = "sgb")
+segment_all = bind_rows(segment_lst, .id = "sgb")
 labels = c("vaginal" = "Vaginal", "rectal" = "Rectal")
-get_pcoa_plot = function(df, segment_df, nrow = 5){
-  points_segment_df = df %>%
-                      left_join(segment_df, by = c("sgb", "sample_id", "species")) %>%
-                      filter(!is.na(x)) %>%
-                      select(-c(x, y, xend, yend))
-  pcoa_plot = ggplot(data = df) +
-    geom_point(aes(x = PCoA1, y = PCoA2, shape = organ), size = 2, color = "#4B4C4C", alpha = 0.3, fill = "grey") + 
-    scale_shape_manual(values = c(21, 24), labels = labels, name = "") +
-    # scale_fill_manual(values = c("vaginal" = "orange", "rectal" = "#057D7F"), labels = labels, name = "") +
-    geom_point(data = points_segment_df, aes(x = PCoA1, y = PCoA2, shape = organ), size = 2.5, color = "#620508", fill = "#620508", alpha = 1) + 
-    geom_segment(data = segment_df, aes(x = x, xend = xend, y = y, yend = yend), linewidth = 1.1, color = "#620508", lineend='round') +
-    theme_bw(base_family = "Gafata") +
-    facet_wrap(~species, nrow = nrow, scales = "free") +
-    theme(legend.position = "bottom") +
-    theme(strip.background = element_rect(fill = "#F8EBC3")) +
-    theme(text = element_text(size = 40)) +
-    theme(strip.text = element_text(size = 43)) +
-    theme(axis.text = element_blank(),
-          axis.ticks = element_blank()) +
-    theme(legend.text = element_text(size = 30))
-  return(pcoa_plot)
-}
 pcoa_plot = get_pcoa_plot(pcoa_all, segment_all, nrow = 3)
-ggsave(pcoa_plot, file = paste0(save_dir, "all_samples_pcoa_distances_with_legend_transparent.png"), height = 7, width = 12, dpi = 300)
+ggsave(pcoa_plot, file = file.path(save_dir, "all_samples_pcoa_distances_grey_transparent.png"), height = 7, width = 12, dpi = 300)
 ```
 
 ## Z score Heatmap
 
-### Functions
-
 ```{r}
-get_tile_heatmap = function(df, breaks_vec = c(-7.5, -4, -2, 0, 1)){
-  breaks <- seq(round(min(df$zscore, na.rm = TRUE), 1), round(max(df$zscore, na.rm = TRUE), 1), length.out = 6)  
-  pal = c("#CA6702","#fcc411","#fcf1d0","#C47EC4","#802780")
-  
-  tile_plot = ggplot(df, aes(x = sample_id_1, y = species, fill = zscore)) +
-    geom_tile() +
-    geom_text(aes(label = signif), color = "black", size = 12) +
-    scale_fill_gradientn(
-      colors = pal,
-      limits = c(min(breaks_vec), max(breaks_vec)),
-      breaks = breaks_vec) +
-    guides(fill = guide_colourbar(barwidth = unit(5, "cm"), barheight = unit(0.5, "cm"))) +
-    labs(x = "Sample ID", y = "", title = "") +
-    scale_y_discrete(position = "right") + 
-    theme_bw(base_family = "Gafata") +
-    # theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-    theme(axis.text.x = element_blank()) +
-    theme(legend.position = "bottom") +
-    theme(text = element_text(size = 55)) +
-    theme(legend.title = element_text(vjust = 1)) +
-    theme(plot.margin = margin(-1.5, 0, 0, 0))
-  
-  return(tile_plot)
-}
+ngd_long_all = bind_rows(ngd_lst, .id = "sgb") 
+save_df_path = file.path(save_dir, paste0("ngd_all_n_", as.character(n), ".csv"))
+write.csv(file = save_df_path, ngd_long_all, quote = FALSE, row.names = FALSE)
 ```
 
-### Plot
+### Non normal P value
 
 ```{r}
 levels_species_df = ngd_all_lst$stats_results %>%
                     mutate(species = str_replace_all(species, " ", "_"))
-ngd_long_all = do.call("rbind", ngd_lst) 
+
+ngd_long_all = ngd_long_all %>%
+                as.data.frame() %>%
+                filter(sample_1_organ != sample_2_organ) %>%
+                group_by(sgb) %>%
+                filter(sum(same_person == TRUE) >= n) %>%
+                ungroup() %>%
+                mutate(log_dist = log(nGD)) 
+
+new_stats_between <- ngd_long_all %>%
+                  filter(sample_id_1 != sample_id_2) %>%
+                  group_by(sgb) %>%
+                  summarise(mean_between   = mean(nGD, na.rm = TRUE),
+                    sd_between     = sd(nGD, na.rm = TRUE),
+                    median_between = median(nGD, na.rm = TRUE),
+                    mad_between    = mad(nGD, na.rm = TRUE),
+                    .groups = "drop")
+
+normality_test <- ngd_long_all %>%
+                    filter(sample_id_1 != sample_id_2) %>%
+                    group_by(sgb) %>%
+                    filter(n() >= 3) %>%
+                    summarise(
+                      shapiro_p  = shapiro.test(log_dist)$p.value,
+                      n_between  = n(),
+                      .groups = "drop"
+                    ) %>%
+                    mutate(is_normal = shapiro_p > 0.05)
+
+between_vals <- ngd_long_all %>%
+                  filter(sample_id_1 != sample_id_2) %>%
+                  group_by(sgb) %>%
+                  summarise(between_nGD = list(nGD), .groups = "drop")
+
+new_zscore_df = ngd_long_all %>%
+              left_join(new_stats_between, by = "sgb") %>%
+              left_join(between_vals, by = "sgb") %>%
+              mutate(within_sample = sample_id_1 == sample_id_2,
+                zscore = if_else(within_sample, (nGD - median_between) / mad_between, NA_real_)) %>% # MAD-based robust z-score instead of mean/sd
+              group_by(sgb) %>%
+              mutate(pval = if_else(within_sample,
+                  map2_dbl(nGD, between_nGD, function(observed, between) {n_perm = 10000
+                    perm_draws = sample(between, size = n_perm, replace = TRUE) # one-tailed: looking for unusually LOW values (strain sharing)
+                    mean(perm_draws <= observed, na.rm = TRUE)}), NA_real_)) %>%
+              ungroup() %>%
+              mutate(fdr = p.adjust(pval, method = 'BH')) %>%
+              mutate(species = factor(species, levels = levels_species_df$species))
+
+new_order_vector = new_zscore_df %>% 
+                arrange(sd_between) %>%
+                distinct(species) %>% 
+                mutate(species = str_replace_all(species, "_", " ")) %>%
+                pull(species)
+```
+
+
+### Normal P value
+
+```{r}
+levels_species_df = ngd_all_lst$stats_results %>%
+                    mutate(species = str_replace_all(species, " ", "_"))
 ngd_long_all = ngd_long_all %>%
                 as.data.frame() %>%
                 filter(sample_1_organ != sample_2_organ) %>%
@@ -424,6 +378,9 @@ order_vector = zscore_df %>%
                 arrange(sd_between) %>%
                 distinct(species) %>% 
                 mutate(species = str_replace_all(species, "_", " ")) %>% pull(species)
+```
+
+```{r}
 levels_species = ngd_all_lst$stats_results %>%
                     arrange(p.adj) %>% pull(species)
 tile_df = zscore_df %>%
@@ -439,8 +396,99 @@ tile_df = zscore_df %>%
                                               TRUE ~ ""))
 
 t_plot = get_tile_heatmap(tile_df, breaks_vec = c(-5.8, -2, 0, 0.5, 1)) 
-ggsave(t_plot, file = file.path(save_dir, "zscore_heatmap.png"), width = 10, height = 6)
+ggsave(t_plot, file = file.path(save_dir, "tiled_plot.png"), width = 10, height = 6)
 ```
+
+
+```{r}
+sup_df = new_zscore_df %>%
+        filter(sample_id_1 == sample_id_2) %>% 
+        select(sample_1, species, median_between, mean_between, sd_between, nGD, pval, fdr) %>%
+        mutate(pval = round(pval, 3), fdr = round(fdr, 3), mean_between = round(mean_between, 3), sd_between = round(sd_between, 3), median_between = round(median_between, 3), nGD = round(nGD, 3)) %>%
+        rename(`Non-parametric P value` = pval, `Non-parameteric FDR-corrected P` = fdr) %>%
+        left_join(zscore_df %>% filter(sample_id_1 == sample_id_2) %>% 
+        select(sample_1, species, pval, fdr)) %>%
+        mutate(pval = round(pval, 3), fdr = round(fdr, 3)) %>%
+        rename(`Normal P value` = pval, `Normal FDR-corrected P` = fdr) %>%
+        mutate(`Non-parametric significant` = if_else(`Non-parameteric FDR-corrected P` <= 0.05, "Significant", "-")) %>%
+        mutate(`Normal significant` = if_else(`Normal FDR-corrected P` <= 0.05, "Significant", "-")) %>%
+        mutate(sample_1 = str_replace(sample_1, "^(([^-]+-){1}[^-]+)-.*$", "\\1"), species = str_replace_all(species, "_", " ")) %>%
+        rename("Sample ID" = "sample_1", "Species" = "species") %>%
+        rename_with(~ str_to_title(str_replace_all(.x, "_", " "))) %>%
+        rename("nGD" = "Ngd")
+
+write.csv(file = file.path(save_dir, "sup_z_score_both_ways.csv"), x = sup_df %>% arrange(`Normal Fdr-Corrected P`, Species))
+```
+
+```{r}
+cols = c("sample_1", "sample_1_organ", "sample_2", "sample_2_organ", "nGD", "same_person", "sgb", "species", "pval", "fdr")
+new_test = new_zscore_df %>% 
+            select(cols) %>% 
+            rename(perm_pval = pval, perm_fdr = fdr) %>%
+            mutate(perm_sig = ifelse(perm_fdr <= 0.05, "sig", "not_sig"))
+write.csv(file = file.path(save_dir, "new_perm_pvals_zscore.csv"), x = new_test %>% arrange(perm_fdr, species))
+test = zscore_df %>% 
+        select(cols) %>% 
+        mutate(sig = ifelse(fdr <= 0.05, "sig", "not_sig")) %>%
+        left_join(new_test) 
+test %>% filter(sig != perm_sig) %>% select(c("sample_1", "sample_2", "species", "fdr", "perm_fdr", "sig", "perm_sig"))
+```
+
+# Together fig 3
+
+```{r}
+all_patched = free(ngd_all_lst$plot / t_plot, type = "label") +
+                plot_annotation(tag_levels = "A") +
+                theme(plot.tag = element_text(size = 80))
+ggsave(file.path(save_dir, "zscore_aes_figure_3.png"), all_patched, height = 14, width = 16, dpi = 300)
+```
+
+# Review additions
+
+## Abundance plot
+
+```{r}
+source('packages/strainphlan_review_additions.R')
+source('packages/maaslin_only.R')
+
+abundance_lst = get_abundance_plot(df_lst = metaphlan_lst$sgb, res_df = ngd_all_lst$stats_results, sgb_2_gtdb, res_dir)
+ggsave(abundance_lst$plot, 
+       file   = file.path(save_dir, "maaslin_paired_abundance_plot.png"), 
+       height = 9, width  = 14.8, dpi = 300)
+```
+
+## nGD 1st percentile
+
+```{r}
+source('../packages/strainphlan_review_additions.R')
+full_percent_df = get_percentile(ngd_all, percentile = 0.01, n = n)
+full_percent_df %>% 
+  select(species, sample_1, sample_2, same_person, percentile_nGD, sig) %>% 
+  filter(same_person == TRUE) %>% arrange(percentile_nGD, sig)
+full_percent_df %>% 
+  filter(same_person == TRUE) %>% 
+  group_by(species, sig) %>% 
+  count() %>% 
+  left_join(ngd_all_lst$stats_results %>% select(c(s, signif)), by = c("species" = "s")) %>%
+  arrange(signif, species, sig, n) %>%
+  filter((signif == "ns" & sig == "shared") | (signif != "ns" & sig == "not_shared"))
+```
+
+## nGD threshold = 0.005
+
+```{r}
+thresh = 0.005
+ngd_all %>% 
+  filter(same_person == TRUE) %>% 
+  mutate(sig = if_else((same_person == TRUE & nGD <= thresh), "shared", "not_shared")) %>%
+  group_by(species, sig) %>% 
+  count() %>% 
+  left_join(ngd_all_lst$stats_results %>% select(c(s, signif)), by = c("species" = "s")) %>%
+  arrange(signif, species, sig, n) %>%
+  filter((signif == "ns" & sig == "shared") | (signif != "ns" & sig == "not_shared"))
+```
+
+
 
 
 
